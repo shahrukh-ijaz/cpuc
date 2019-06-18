@@ -1,11 +1,9 @@
 import scrapy
 from scrapy import FormRequest
-from scrapy.utils.response import open_in_browser
 
 
-
-class QuotesSpider(scrapy.Spider):
-    name = "quotes"
+class CpucSpider(scrapy.Spider):
+    name = "cpuc"
     allowed_domains = ['docs.cpuc.ca.gov']
 
     start_urls = ['http://docs.cpuc.ca.gov/advancedsearchform.aspx']
@@ -33,11 +31,13 @@ class QuotesSpider(scrapy.Spider):
                                         formdata=formdata,  method='POST', callback=self.parse_search_result)
 
     def parse_search_result(self, response):
-        open_in_browser(response)
+        table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr")
+        skip = False
+        for row in table_rows:
+            if not skip:
+                title = row.xpath("td[@class='ResultTitleTD']/text()").get()
+                print(title)
+                skip = True
+            else:
+                skip = False
 
-        form = response.css("form")
-        table_rows = form.css("table#ResultTable")
-        print(response.body)
-        print("ok")
-        # for row in table_rows:
-        #     print(row.css("td.ResultTitleTD").extract_first())
