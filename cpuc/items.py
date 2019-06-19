@@ -8,7 +8,23 @@
 import scrapy
 
 
-class CpucItem(scrapy.Item):
-    # define the fields for your item here like:
-    # name = scrapy.Field()
-    pass
+class DocumentDetail(scrapy.Item):
+    filling_date = scrapy.Field()
+    filled_by = scrapy.Field()
+    description = scrapy.Field()
+    document_type = scrapy.Field()
+    document_link = scrapy.Field()
+    proceeding_url = scrapy.Field()
+    documents = scrapy.Field()
+
+
+class Document(scrapy.Item):
+    title = scrapy.Field()
+    link = scrapy.Field()
+    type = scrapy.Field()
+    date = scrapy.Field()
+
+
+class File(scrapy.Item):
+    file_urls = scrapy.Field()
+    files = scrapy.Field()
