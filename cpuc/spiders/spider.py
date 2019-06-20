@@ -2,6 +2,7 @@ import random
 
 import scrapy
 from scrapy import FormRequest
+from scrapy.utils.response import open_in_browser
 
 from cpuc.items import DocumentDetail, Document, File
 
@@ -16,8 +17,8 @@ class CpucSpider(scrapy.Spider):
         formdata = {
                     '__EVENTARGUMENT': '',
                     '__EVENTTARGET': '',
-                    'FilingDateFrom': '06/17/19',
-                    'FilingDateTo': '06/19/19',
+                    'FilingDateFrom': '06/19/19',
+                    'FilingDateTo': '06/20/19',
                     '__VIEWSTATEGENERATOR': '6DB12421',
                     'DocTitle': '',
                     'ddlCpuc01Types': '-1',
@@ -43,123 +44,103 @@ class CpucSpider(scrapy.Spider):
                 proceeding_number = row.xpath("td[@class='ResultTitleTD']/text()")[1].get()
                 len_str = len(proceeding_number)
                 proceeding_number = proceeding_number[12: len_str]
+                if len(proceeding_number) > 8:
+                    proceeding_number = proceeding_number[0:8]
                 proceeding_set.add(proceeding_number)
                 skip = True
             else:
                 skip = False
         for proceeding_number in proceeding_set:
-            next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6056676397617::NO:RP,57,RIR:P5_PROCEEDING_SELECT:{}'\
+            next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR:P5_PROCEEDING_SELECT:{}'\
                 .format(proceeding_number)
-            yield response.follow(next_page, callback=self.parse_proceeding_number)
-
-        __EVENTTARGET = response.xpath("//input[@id='__EVENTTARGET']/@value").get()
-        __EVENTARGUMENT = response.xpath("//input[@id='__EVENTARGUMENT']/@value").get()
-        __VIEWSTATE = response.xpath("//input[@id='__VIEWSTATE']/@value").get()
-        __EVENTVALIDATION = response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
-        __VIEWSTATEGENERATOR = response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get()
-
+            yield response.follow(next_page, callback=self.parse_proceeding_number,
+                                  meta={'proceeding_number': proceeding_number})
         formdata = {
-            '__EVENTARGUMENT': '',
-            # '__EVENTTARGET': 'lnkNextPage',
-            '__EVENTTARGET': __EVENTTARGET,
-            '__VIEWSTATEGENERATOR': __VIEWSTATEGENERATOR,
-            '__VIEWSTATE': __VIEWSTATE,
-            '__EVENTVALIDATION': __EVENTVALIDATION
+            '__EVENTTARGET': 'lnkNextPage',
+            '__VIEWSTATEGENERATOR': response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get(),
+            '__VIEWSTATE': response.xpath("//input[@id='__VIEWSTATE']/@value").get(),
+            '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
         }
+        yield FormRequest(
+            url='http://docs.cpuc.ca.gov/SearchRes.aspx',
+            formdata=formdata,
+            callback=self.parse_search_result
+        )
 
-        header = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,applicatio'
-                      'n/signed-exchange;v=b3',
-            'Accept-Encoding': 'gzip, deflate',
+    def parse_proceeding_number(self, response):
+        proceeding_number = response.meta['proceeding_number']
+        print("url {} ".format(response.url))
+        request_headers = {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3',
+            'Accept-Encoding': 'gzip, deflate, br',
             'Accept-Language': 'en-US,en;q=0.9',
             'Cache-Control': 'max-age=0',
             'Connection': 'keep-alive',
-            'Content-Length': '6651',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Cookie': 'ASP.NET_SessionId=jxak2aki2csjq5npstsb20wf; __utmc=158387685; __utmz=158387685.1560849224.1.1.'
-                      'utmcsr=docs.cpuc.ca.gov|utmccn=(referral)|utmcmd=referral|utmcct=/; _ga=GA1.2.337400943.1560849'
-                      '224; _gid=GA1.2.1198388468.1560849224; __utma=158387685.337400943.1560849224.1560929225.15609458'
-                      '84.3; __utmb=158387685.1.10.1560945884',
-            'Host': 'docs.cpuc.ca.gov',
-            'Origin': 'http://docs.cpuc.ca.gov',
-            'Referer': 'http://docs.cpuc.ca.gov/SearchRes.aspx',
+            'Cookie': 'ORA_WWV_APP_401=ORA_WWV-TKzeX01sacIBsLyvMQbAU7gP; __utmc=158387685; __utmz=158387685.1560849224.1.1.utmcsr=docs.cpuc.ca.gov|utmccn=(referral)|utmcmd=referral|utmcct=/; _ga=GA1.2.337400943.1560849224; __utma=158387685.337400943.1560849224.1560945884.1561023934.4',
+            'Referer': 'https://apps.cpuc.ca.gov/apex/f?p=401:56:0::NO',
             'Upgrade-Insecure-Requests': '1',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.80 '
-                          'Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/75.0.3770.80 Safari/537.36'
         }
 
-        yield FormRequest(response.url, headers=header,
-                          formdata=formdata, method='POST', callback=self.parse_search_result)
-
-    def parse_proceeding_number(self, response):
-        request_headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;'
-                      'q=0.8,application/signed-exchange;v=b3',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'cache-Control': 'max-age=0',
-            'Connection': 'keep-alive',
-            'Cookie': 'ORA_WWV_APP_401=ORA_WWV-bUIujB/8hQcssXI2W5dvC9gf; __'
-                      'utma=158387685.337400943.1560849224.1560849224.1560849224.1; __'
-                      'utmc=158387685; __utmz=158387685.1560849224.1.1.utmcsr=docs.cpuc.ca.gov|'
-                      'utmccn=(referral)|utmcmd=referral|utmcct=/; _'
-                      'ga=GA1.2.337400943.1560849224;'
-                      ' _gid=GA1.2.1198388468.1560849224',
-            'Host': 'apps.cpuc.ca.gov',
-            'Referer': 'https://apps.cpuc.ca.gov/apex/f?p=401:56:16151960050578::NO:RP,'
-                       '57,RIR:P5_PROCEEDING_SELECT:A1803009',
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) '
-                          'Chrome/75.0.3770.80 Safari/537.36'
-        }
-        return scrapy.Request("https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO",
-                              callback=self.temp, headers=request_headers, method='GET', meta={'proceeding_url'
-                                                                                                        : response.url})
+        yield scrapy.Request(
+            url='www.apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
+            callback=self.temp,
+            headers=request_headers
+        )
 
     def temp(self, response):
-        print("")
+        print("function_test")
 
     def save_document(self, response):
-        print("proceeding urx {}".format(response.meta['proceeding_url']))
+        print("this is url")
         table_documents = response.xpath("//div[@id='apexir_DATA_PANEL']//table[@class='apexir_WORKSHEET_DATA']"
                                          "//tr")
-        skip = True     # first row is empty that's why skip one time
+        skip = True  # first row is empty that's why skip one time
         for data in table_documents:
             document_detail = DocumentDetail()
             if skip:
                 skip = False
             else:
-                column_no = 1
-                for columns in data.xpath("td"):        # for fetching each column of table
-                    if column_no == 1:
-                        document_detail['filling_date'] = columns.xpath("text()").get()
-                        column_no += 1
-                    elif column_no == 2:
-                        document_detail['document_link'] = columns.xpath("a/@href").get()
-                        document_detail['document_type'] = columns.xpath("a/span/u/text()").get()
-                        column_no += 1
-                    elif column_no == 3:
-                        for filled_party in columns.xpath("text()"):
-                            document_detail['filled_by'] = filled_party.get()
-                        print(document_detail['filled_by'])
-                        column_no += 1
-                    elif column_no == 4:
-                        document_detail['description'] = columns.xpath("text()").get()
-                        document_detail['proceeding_url'] = response.meta['proceeding_url']
-                        print(document_detail)
+                FILING_DATE = data.xpath("td[@headers='FILING_DATE']/text()").get()
+                DOCUMENT_Title = data.xpath("td[@headers='DOCUMENT_TYPE']/a/text()").get()
+                DOCUMENT_TYPE = data.xpath("td[@headers='DOCUMENT_TYPE']/a/span/u/text()").get()
+                FILED_BY = data.xpath("td[@headers='FILED_BY']/text()").get()
+                DESCRIPTION = data.xpath("td[@headers='DESCRIPTION']/text()").get()
 
-                yield response.follow(document_detail['document_link'], callback=self.download_pdf,
-                                      meta={'document': document_detail})
+                print(FILED_BY)
+                # column_no = 1
+                # for columns in data.xpath("td"):  # for fetching each column of table
+                #     if column_no == 1:
+                #         document_detail['filling_date'] = columns.xpath("text()").get()
+                #         column_no += 1
+                #     elif column_no == 2:
+                #         document_detail['document_link'] = columns.xpath("a/@href").get()
+                #         document_detail['document_type'] = columns.xpath("a/span/u/text()").get()
+                #         column_no += 1
+                #     elif column_no == 3:
+                #         for filled_party in columns.xpath("text()"):
+                #             document_detail['filled_by'] = filled_party.get()
+                #         print(document_detail['filled_by'])
+                #         column_no += 1
+                #     elif column_no == 4:
+                #         document_detail['description'] = columns.xpath("text()").get()
+                #         document_detail['proceeding_url'] = response.meta['proceeding_url']
+                #         print(document_detail)
+                #
+                # yield response.follow(document_detail['document_link'], callback=self.download_pdf,
+                #                       meta={'document': document_detail})
 
-            formdata = {
-                '__EVENTARGUMENT': '',
-                '__EVENTTARGET': 'lnkNextPage',
-                '__VIEWSTATEGENERATOR': 'F8727AE4',
-                '__VIEWSTATE': '/wEPDwUKLTk4MTE4OTkyNQ9kFgICBQ9kFgwCAQ8PFgIeB1Zpc2libGVoZGQCAg8PFgIfAGhkZAIDDw8WAh8AaGRkAgQPFgIeC18hSXRlbUNvdW50AgQWCGYPZBYEAgEPDxYCHg9Db21tYW5kQXJndW1lbnQFATFkFgJmDxUBATFkAgIPFQEBIGQCAQ9kFgQCAQ8PFgIfAgUBMmQWAmYPFQEBMmQCAg8VAQEgZAICD2QWBAIBDw8WAh8CBQEzZBYCZg8VAQEzZAICDxUBASBkAgMPZBYEAgEPDxYCHwIFATRkFgJmDxUBATRkAgIPFQEBIGQCBg8PFgIfAGhkZAIIDxYCHwECFBYoAgEPZBYCZg8VBVJSdWxpbmcgZmlsZWQgYnkgQUxKL0ZJVENIL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU3MjggKENlcnRpZmljYXRlIE9mIFNlcnZpY2UpFFByb2NlZWRpbmc6IFIxMzExMDA1D0UtRmlsZWQ6IFJ1bGluZ088YSBocmVmPScvUHVibGlzaGVkRG9jcy9FZmlsZS9HMDAwL00zMDIvSzI0MC8zMDIyNDA3NDguUERGJz5QREY8L2E+ICg3NiBLQik8YnI+CjA2LzE4LzIwMTlkAgMPZBYCZg8VBTlSdWxpbmcgZmlsZWQgYnkgQUxKL0ZJVENIL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU3MjgUUHJvY2VlZGluZzogUjEzMTEwMDUPRS1GaWxlZDogUnVsaW5nUDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL0VmaWxlL0cwMDAvTTMwMi9LMjQwLzMwMjI0MDg1Ny5QREYnPlBERjwvYT4gKDE3NSBLQik8YnI+CjA2LzE4LzIwMTlkAgUPZBYCZg8VBVNSdWxpbmcgZmlsZWQgYnkgQUxKL1NFTUNFUi9DUFVDIG9uIDA2LzE3LzIwMTkgQ29uZiMgMTM1NjgwIChDZXJ0aWZpY2F0ZSBPZiBTZXJ2aWNlKRRQcm9jZWVkaW5nOiBSMTgxMjAwNQ9FLUZpbGVkOiBSdWxpbmdPPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvRWZpbGUvRzAwMC9NMzAzL0swNzQvMzAzMDc0MjAzLlBERic+UERGPC9hPiAoNzYgS0IpPGJyPgowNi8xOC8yMDE5ZAIHD2QWAmYPFQU6UnVsaW5nIGZpbGVkIGJ5IEFMSi9TRU1DRVIvQ1BVQyBvbiAwNi8xNy8yMDE5IENvbmYjIDEzNTY4MBRQcm9jZWVkaW5nOiBSMTgxMjAwNQ9FLUZpbGVkOiBSdWxpbmdQPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvRWZpbGUvRzAwMC9NMzAyL0s5NDIvMzAyOTQyMjg5LlBERic+UERGPC9hPiAoMTI0IEtCKTxicj4KMDYvMTgvMjAxOWQCCQ9kFgJmDxUFUFJ1bGluZyBmaWxlZCBieSBBTEovS0FPL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU2NzkgKENlcnRpZmljYXRlIE9mIFNlcnZpY2UpFFByb2NlZWRpbmc6IEExODEyMDE3D0UtRmlsZWQ6IFJ1bGluZ088YSBocmVmPScvUHVibGlzaGVkRG9jcy9FZmlsZS9HMDAwL00zMDIvSzk0Mi8zMDI5NDIyODguUERGJz5QREY8L2E+ICg3NiBLQik8YnI+CjA2LzE4LzIwMTlkAgsPZBYCZg8VBTdSdWxpbmcgZmlsZWQgYnkgQUxKL0tBTy9DUFVDIG9uIDA2LzE3LzIwMTkgQ29uZiMgMTM1Njc5FFByb2NlZWRpbmc6IEExODEyMDE3D0UtRmlsZWQ6IFJ1bGluZ1A8YSBocmVmPScvUHVibGlzaGVkRG9jcy9FZmlsZS9HMDAwL00zMDIvSzI0MC8zMDIyNDA4NDguUERGJz5QREY8L2E+ICgxMzQgS0IpPGJyPgowNi8xOC8yMDE5ZAIND2QWAmYPFQUiR1JTIEF0dGFjaG1lbnQgM19SZXBvcnQgMDYuMTcuMjAxORRQcm9jZWVkaW5nOiBSMTUwMTAwOBxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50UzxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9SMTUwMTAwOC8yMTIxLzMwMTk0NTk4MS5wZGYnPlBERjwvYT4gKDM3MzYwMyBLQik8YnI+CjA2LzE4LzIwMTlkAg8PZBYCZg8VBTFHUlMgLSBBcHBlbmRpeCA5X0VtaXNzaW9uIEZhY3RvcnNfMDYuMTcuMjAxOS54bHN4FFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMjEvMzAyMjk4MDM5LnBkZic+UERGPC9hPiAoMTA0NDk0IEtCKTxicj4KMDYvMTgvMjAxOWQCEQ9kFgJmDxUFMUdSUyAtIEFwcGVuZGl4IDhfVGVtcGxhdGUgU3VtbWFyeV8wNi4xNy4yMDE5Lnhsc3gUUHJvY2VlZGluZzogUjE1MDEwMDgcRS1GaWxlZDogU3VwcG9ydGluZyBEb2N1bWVudFM8YSBocmVmPScvUHVibGlzaGVkRG9jcy9TdXBEb2MvUjE1MDEwMDgvMjEyMS8zMDIyNDA4NDYucGRmJz5QREY8L2E+ICgxMTQ4ODcgS0IpPGJyPgowNi8xOC8yMDE5ZAITD2QWAmYPFQUzR1JTIC0gQXBwZW5kaXggN19TdG9yYWdlIEZhY2lsaXRpZXNfMDYuMTcuMjAxOS54bHN4FFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMjEvMzAxOTI0OTkwLnBkZic+UERGPC9hPiAoMjAwNTYyIEtCKTxicj4KMDYvMTgvMjAxOWQCFQ9kFgJmDxUFLEdSUyAtIEFwcGVuZGl4IDZfTVNBIFN5c3RlbXNfMDYuMTcuMjAxOS54bHN4FFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMjEvMzAyMjQwNzQwLnBkZic+UERGPC9hPiAoMTUyNzA5IEtCKTxicj4KMDYvMTgvMjAxOWQCFw9kFgJmDxUFYFNXR2FzIChVIDkwNSBHKV9SZXNwb25zZSB0byBTRUQgRGF0YSBSZXF1ZXN0IChTb3V0aHdlc3QgR2FzIFIxNS0wMS0wMDggMjAxOSBBbm51YWwgUmVwb3J0KV9GSU5BTBRQcm9jZWVkaW5nOiBSMTUwMTAwOBxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50VTxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9SMTUwMTAwOC8yMTIwLzMwMTkyNDk4OC5wZGYnPlBERjwvYT4gKDc1OTIzOTQxIEtCKTxicj4KMDYvMTgvMjAxOWQCGQ9kFgJmDxUFVVJ1bGluZyBmaWxlZCBieSBBTEovSlVOR1JFSVMvQ1BVQyBvbiAwNi8xNy8yMDE5IENvbmYjIDEzNTY4NSAoQ2VydGlmaWNhdGUgT2YgU2VydmljZSkUUHJvY2VlZGluZzogQTE5MDMwMDgPRS1GaWxlZDogUnVsaW5nUDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL0VmaWxlL0cwMDAvTTMwMy9LMDc0LzMwMzA3NDIwMS5QREYnPlBERjwvYT4gKDE0NSBLQik8YnI+CjA2LzE3LzIwMTlkAhsPZBYCZg8VBTxSdWxpbmcgZmlsZWQgYnkgQUxKL0pVTkdSRUlTL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU2ODUUUHJvY2VlZGluZzogQTE5MDMwMDgPRS1GaWxlZDogUnVsaW5nUDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL0VmaWxlL0cwMDAvTTMwMS9LOTQ1LzMwMTk0NTk4MC5QREYnPlBERjwvYT4gKDExNyBLQik8YnI+CjA2LzE3LzIwMTlkAh0PZBYCZg8VBSZSMTUwMTAwOC1QR0UtTkdMQS1BcHAwNi1SZWRhY3RlZC1QYXJ0MhRQcm9jZWVkaW5nOiBSMTUwMTAwOBxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50VTxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9SMTUwMTAwOC8yMTE5LzMwMTkyNDk4Ni5wZGYnPlBERjwvYT4gKDE2MzE4MjcxIEtCKTxicj4KMDYvMTcvMjAxOWQCHw9kFgJmDxUFJlIxNTAxMDA4LVBHRS1OR0xBLUFwcDA2LVJlZGFjdGVkLVBhcnQxFFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRVPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMTgvMzAxOTI0OTg1LnBkZic+UERGPC9hPiAoMTcyNDE2OTYgS0IpPGJyPgowNi8xNy8yMDE5ZAIhD2QWAmYPFQUWU3VtbWFyeSBTaGVldF9KQ01fMjAyMBRQcm9jZWVkaW5nOiBBMTcwMTAxMxxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50VDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9BMTcwMTAxMy8yMTE2LzMwMTkyNDk4Mi5wZGYnPlBERjwvYT4gKDExNzQ1MjYgS0IpPGJyPgowNi8xNy8yMDE5ZAIjD2QWAmYPFQU6TUNFIFBHRSBKb2ludCBDb29wZXJhdGlvbiBDZXJ0aWZpY2F0ZSBvZiBTZXJ2aWNlIDYtMTctMjAxORRQcm9jZWVkaW5nOiBBMTcwMTAxMxxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50UzxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9BMTcwMTAxMy8yMTE2LzMwMjI5ODAzMy5wZGYnPlBERjwvYT4gKDUxNzUzMiBLQik8YnI+CjA2LzE3LzIwMTlkAiUPZBYCZg8VBTdNQ0UgQWR2aWNlIExldHRlciAzNi1FIFBHJkUgQWR2aWNlIExldHRlciA0MTA3LUctNTU2My1FFFByb2NlZWRpbmc6IEExNzAxMDEzHEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL0ExNzAxMDEzLzIxMTYvMzAyMjg2MTkwLnBkZic+UERGPC9hPiAoNDg5NjQzIEtCKTxicj4KMDYvMTcvMjAxOWQCJw9kFgJmDxUFTUExODAzMDA5IFNDRS0wNC1BIEJsZWRzb2UgRVJSQVRBIFJlYXNvbmFibGVuZXNzIG9mIFNPTkdTIDEgRXhwZW5zZXMgMjAxNi0yMDE3FFByb2NlZWRpbmc6IEExODAzMDA5HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL0ExODAzMDA5LzIxMTUvMzAyMjg2MTg5LnBkZic+UERGPC9hPiAoMTg3NDk5IEtCKTxicj4KMDYvMTcvMjAxOWRkgbFULY0pkImMgHBcD01P0VFUvs+M4zbGffzxJNPjwks=',
-                '__EVENTVALIDATION': '/wEdAAs7/SzGrJTxWQTlgEuFeQdE+KzX0FwelcUOhBan/b5uzOgvnuFPcTGgEjLUkdWZc9Q3HyTnWxBPDserVE5AdOKMboAdnFN9V8/jdI6JisscRk4bsve4h24cI1UNeqgIUed3XcL1uN8jICMXmyKyKvRhmxqxgsKed83dLNmKlXfwAJr9MmqSrK6WW0iyGSBDO3+z+wwn6BZL4VHpTU8Tzi856xnhpwsSGQBSYSfF1dWHPbdnme2xzh8PLXfskS+CalL/7mh8OVdGW0F8+RGYNcsD'
-            }
-            yield FormRequest.from_response(response,
-                                            formdata=formdata, method='POST', callback=self.save_document)
+            # formdata = {
+            #     '__EVENTTARGET': 'lnkNextPage',
+            #     '__VIEWSTATEGENERATOR': response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get(),
+            #     '__VIEWSTATE': response.xpath("//input[@id='__VIEWSTATE']/@value").get(),
+            #     '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
+            # }
+            # yield FormRequest(
+            #     url=response,
+            #     formdata=formdata,
+            #     method='POST',
+            #     callback=self.save_document)
 
     def download_pdf(self, response):
         document_detail = response.meta['document']
