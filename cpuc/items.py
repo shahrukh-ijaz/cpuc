@@ -6,6 +6,7 @@
 # https://doc.scrapy.org/en/latest/topics/items.html
 
 import scrapy
+from scrapy import Field
 
 
 class DocumentDetail(scrapy.Item):
@@ -28,3 +29,14 @@ class Document(scrapy.Item):
 class File(scrapy.Item):
     file_urls = scrapy.Field()
     files = scrapy.Field()
+
+
+class ProceedingDetail(scrapy.Item):
+    title = Field()
+    filing_parties = Field()
+    industries = Field()
+    filled_on = Field()
+    proceeding_type = Field()
+    status = Field()
+    description = Field()
+    assignees = Field()
