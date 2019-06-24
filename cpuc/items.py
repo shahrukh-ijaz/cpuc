@@ -19,11 +19,11 @@ class DocumentDetail(scrapy.Item):
     documents = scrapy.Field()
 
 
-class Document(scrapy.Item):
-    title = scrapy.Field()
-    link = scrapy.Field()
-    type = scrapy.Field()
-    date = scrapy.Field()
+# class Document(scrapy.Item):
+#     title = scrapy.Field()
+#     link = scrapy.Field()
+#     type = scrapy.Field()
+#     date = scrapy.Field()
 
 
 class File(scrapy.Item):
@@ -40,3 +40,19 @@ class ProceedingDetail(scrapy.Item):
     status = Field()
     description = Field()
     assignees = Field()
+    filings = Field()
+    source_url = Field()
+
+
+class Filing(scrapy.Item):
+    description = Field()
+    documents = Field()
+    filled_on = Field()
+    filing_parties = Field()
+    types = Field()
+
+
+class Document(scrapy.Item):
+    title = Field()
+    source_url = Field()
+    extension = Field()
