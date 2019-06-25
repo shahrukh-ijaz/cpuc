@@ -2,7 +2,7 @@ import scrapy
 from scrapy import FormRequest
 
 from cpuc.RequestManager import RequestManager
-from cpuc.items import DocumentDetail, Document, File, ProceedingDetail, Filing
+from cpuc.items import Document, ProceedingDetail, Filing
 
 
 class CpucSpider(scrapy.Spider):
@@ -94,35 +94,37 @@ class CpucSpider(scrapy.Spider):
         for industry in table_rows.xpath("td[position()=2]//span[@id='P56_STAFF']/text()"):
             assignees.append(industry.get())
         proceeding_details['assignees'] = assignees
-        filings_list = list()
         cookie = response.request.headers.getlist("Cookie")
+        proceeding_details['filings'] = list()
         yield scrapy.Request(
             url='https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
             callback=self.save_document,
             errback=self.error_back,
             headers={'Cookie': cookie},
             dont_filter=True,
-            meta={'item': proceeding_details, 'dont_merge_cookies': True,
-                  'filing_list': filings_list}
+            meta={'item': proceeding_details, 'dont_merge_cookies': True}
         )
 
     def error_back(self, failure):
         print(failure)
 
     def save_document(self, response):
+        item = response.meta['item']
         filings = Filing()
         table = response.xpath("//div[@id='apexir_DATA_PANEL']//table[@class='apexir_WORKSHEET_DATA']")
         table_rows = table.xpath("//tr[@class='even'] | //tr[@class='odd']")
-        filings_list = response.meta['filing_list']
         for row in table_rows:
+
             filings['description'] = row.xpath("td[@headers='DESCRIPTION']/text()").get()
             filings['filled_on'] = row.xpath("td[@headers='FILING_DATE']/text()").get()
-            filings['filing_parties'] = row.xpath("td[@headers='FILED_BY']/text()").get()
+            filings['types'] = list()
+            filings['types'].append(row.xpath("td[@headers='DOCUMENT_TYPE']//u/text()").get())
+            filings['filing_parties'] = list()
+            filings['filing_parties'].append(row.xpath("td[@headers='FILED_BY']/text()").get())
+
             document_link = row.xpath("td[@headers='DOCUMENT_TYPE']/a/@href").get()
-            filings['types'] = row.xpath("td[@headers='DOCUMENT_TYPE']/a/span/u/text() ").get()
-
-            filings_list.append(filings)
-
+            item = response.meta['item']
+            item['filings'].append(filings)
             request = response.follow(document_link,
                                       callback=self.parse_document_page,
                                       meta={'item': response.meta['item'],
@@ -138,53 +140,47 @@ class CpucSpider(scrapy.Spider):
                 '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
             }
 
-            next_page_request = FormRequest.from_response(response,
-                                                          formdata=formdata,
-                                                          method='POST',
-                                                          callback=self.save_document,
-                                                          meta={'item': response.meta['item'],
-                                                                'filing_list': filings_list})
-
-            self.request_manager.next_page = next_page_request
-
-            if len(self.request_manager.Filing_request) > 0:
-                yield self.request_manager.Filing_request.pop()
+            next_page_request_parameters = {
+                'formdata': formdata,
+                'method': 'POST',
+                'url': response,
+                'callback': self.save_document
+            }
+            self.request_manager.next_page = next_page_request_parameters
+        else:
+            self.request_manager.next_page = None
+        if len(self.request_manager.Filing_request) > 0:
+            yield self.request_manager.Filing_request.pop()
+        else:
+            yield {'dockets': item}
 
     def parse_document_page(self, response):
-        # item = response.meta['item']
-        for row in response.xpath("//table[@id='ResultTable']/tr"):
-            title = row.xpath("td[@class='ResultTitleTD']/text()")[0].get()
-            source_url = "http://docs.cpuc.ca.gov{}".format(row.xpath("td[@class='ResultLinkTD']/a/@href").get())
-            extension = row.xpath("td[@class='ResultLinkTD']/a/text()").get()
-            print("hello")
-
-
-
-
-    def download_pdf(self, response):
         item = response.meta['item']
-        item['filings'] = response.meta['filing_list']
-        yield {'dockets': item}
-        # document_detail = response.meta['document']
-        # table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr")
-        # skip = False
-        # documents = list()
-        # files_list = list()
-        # for row in table_rows:
-        #     document = Document()
-        #     if not skip:
-        #         document['title'] = row.xpath("td[@class='ResultTitleTD']/text()").get()
-        #         document['link'] = response.urljoin(row.xpath("td[@class='ResultLinkTD']/a/@href").get())
-        #         files_list.append(document['link'])
-        #         document['type'] = row.xpath("td[@class='ResultTypeTD']/text()").get()
-        #         document['date'] = row.xpath("td[@class='ResultDateTD']/text()").get()
-        #         documents.append(document)
-        #         skip = True
-        #     else:
-        #         skip = False
-        #
-        # document_detail['documents'] = documents
-        # files = File()
-        # files['file_urls'] = files_list
-        # # yield files
-        # yield document_detail
+        table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr")
+        skip = False
+        document_list = list()
+        for row in table_rows:
+            if not skip:
+                document = Document()
+                document['title'] = row.xpath("td[@class='ResultTitleTD']/text()").get()
+                document['source_url'] = "http://docs.cpuc.ca.gov{}".format(row.xpath("td[@class="
+                                                                                      "'ResultLinkTD']/a/@href").get())
+                document['extension'] = row.xpath("td[@class='ResultLinkTD']/a/text()").get()
+                document_list.append(document)
+                skip = True
+            else:
+                skip = False
+
+        item['filings'][len(item['filings'])-1]['documents'] = document_list
+
+        if len(self.request_manager.Filing_request) > 0:
+            yield self.request_manager.Filing_request.pop()
+        elif len(self.request_manager.Filing_request) == 0:
+            yield FormRequest.from_response(self.request_manager.next_page['url'],
+                                            formdata=self.request_manager.next_page['formdata'],
+                                            method=self.request_manager.next_page['method'],
+                                            callback=self.request_manager.next_page['callback'],
+                                            meta={'item': item, 'dont_merge_cookies': True})
+        elif self.request_manager.next_page is None:
+            yield item
+

@@ -1,20 +1,22 @@
 import scrapy
 from scrapy import FormRequest
-from cpuc.items import DocumentDetail, Document, File, ProceedingDetail
+
+from cpuc.RequestManager import RequestManager
+from cpuc.items import Document, ProceedingDetail, Filing
 
 
 class CpucSpider(scrapy.Spider):
     name = "cpuc"
     allowed_domains = ['cpuc.ca.gov']
-
+    request_manager = RequestManager()
     start_urls = ['http://docs.cpuc.ca.gov/advancedsearchform.aspx']
 
     def parse(self, response):
         formdata = {
                     '__EVENTARGUMENT': '',
                     '__EVENTTARGET': '',
-                    'FilingDateFrom': '06/19/19',
-                    'FilingDateTo': '06/20/19',
+                    'FilingDateFrom': '06/20/19',
+                    'FilingDateTo': '06/21/19',
                     '__VIEWSTATEGENERATOR': '6DB12421',
                     'DocTitle': '',
                     'ddlCpuc01Types': '-1',
@@ -35,25 +37,27 @@ class CpucSpider(scrapy.Spider):
                                         )
 
     def parse_search_result(self, response):
-        proceeding_set = set()
-        table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr")
-        skip = False
-        for row in table_rows:
-            if not skip:
-                proceeding_number = row.xpath("td[@class='ResultTitleTD']/text()")[1].get()
-                len_str = len(proceeding_number)
-                proceeding_number = proceeding_number[12: len_str]
-                if len(proceeding_number) > 8:
-                    proceeding_number = proceeding_number[0:8]
-                proceeding_set.add(proceeding_number)
-                skip = True
-            else:
-                skip = False
-        for proceeding_number in proceeding_set:
-            next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR:P5_PROCEEDING_SELECT:{}'\
-                .format(proceeding_number)
-            yield response.follow(next_page, callback=self.parse_proceeding_number,
-                                  meta={'proceeding_number': proceeding_number})
+        next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR:P5_PROCEEDING_SELECT:{}' \
+            .format("I1508019")
+        yield response.follow(next_page, callback=self.parse_proceeding_number)
+        # proceeding_set = set()
+        # table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr")
+        # skip = False
+        # for row in table_rows:
+        #     if not skip:
+        #         proceeding_number = row.xpath("td[@class='ResultTitleTD']/text()")[1].get()
+        #         len_str = len(proceeding_number)
+        #         proceeding_number = proceeding_number[12: len_str]
+        #         if len(proceeding_number) > 8:
+        #             proceeding_number = proceeding_number[0:8]
+        #         proceeding_set.add(proceeding_number)
+        #         skip = True
+        #     else:
+        #         skip = False
+        #     if len(proceeding_set) > 0:
+        #         next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR:P5_PROCEEDING_SELECT:{}'\
+        #         .format(proceeding_set.pop())
+        #         yield response.follow(next_page, callback=self.parse_proceeding_number)
         formdata = {
             '__EVENTTARGET': 'lnkNextPage',
             '__VIEWSTATEGENERATOR': response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get(),
@@ -84,88 +88,93 @@ class CpucSpider(scrapy.Spider):
         proceeding_details['status'] = table_rows.xpath("td[position()=2]//span[@id='P56_STATUS']/text()").get()
         proceeding_details['proceeding_type'] = table_rows.xpath("td[position()=2]//span[@id='P56_CATEGORY']/text()").get()
         proceeding_details['title'] = table_rows.xpath("td[position()=2]//span[@id='P56_DESCRIPTION']/text()").get()
+        proceeding_details['source_url'] = response.url
 
         assignees = list()
         for industry in table_rows.xpath("td[position()=2]//span[@id='P56_STAFF']/text()"):
             assignees.append(industry.get())
         proceeding_details['assignees'] = assignees
-
         cookie = response.request.headers.getlist("Cookie")
-
+        proceeding_details['filings'] = list()
         yield scrapy.Request(
             url='https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
             callback=self.save_document,
             errback=self.error_back,
             headers={'Cookie': cookie},
             dont_filter=True,
-            meta={'details': proceeding_details, 'dont_merge_cookies': True}
+            meta={'item': proceeding_details, 'dont_merge_cookies': True}
         )
 
     def error_back(self, failure):
         print(failure)
 
     def save_document(self, response):
-        table_documents = response.xpath("//div[@id='apexir_DATA_PANEL']//table[@class='apexir_WORKSHEET_DATA']"
-                                         "//tr")
-        skip = True     # first row is empty that's why skip one time
-        for data in table_documents:
-            document_detail = DocumentDetail()
-            if skip:
-                skip = False
-            else:
-                column_no = 1
-                for columns in data.xpath("td"):        # for fetching each column of table
-                    if column_no == 1:
-                        document_detail['filling_date'] = columns.xpath("text()").get()
-                        column_no += 1
-                    elif column_no == 2:
-                        document_detail['document_link'] = columns.xpath("a/@href").get()
-                        print(document_detail['document_link'])
-                        document_detail['document_type'] = columns.xpath("a/span/u/text()").get()
-                        column_no += 1
-                    elif column_no == 3:
-                        for filled_party in columns.xpath("text()"):
-                            document_detail['filled_by'] = filled_party.get()
+        item = response.meta['item']
+        filings = Filing()
+        table = response.xpath("//div[@id='apexir_DATA_PANEL']//table[@class='apexir_WORKSHEET_DATA']")
+        table_rows = table.xpath("//tr[@class='even'] | //tr[@class='odd']")
+        for row in table_rows:
+            filings['description'] = row.xpath("td[@headers='DESCRIPTION']/text()").get()
+            document_link = row.xpath("td[@headers='DOCUMENT_TYPE']/a/@href").get()
+            item = response.meta['item']
+            item['filings'].append(filings)
+            request = response.follow(document_link,
+                                      callback=self.parse_document_page,
+                                      meta={'item': response.meta['item'],
+                                            'dont_merge_cookies': True})
+            self.request_manager.Filing_request.append(request)
 
-                        column_no += 1
-                    elif column_no == 4:
-                        document_detail['description'] = columns.xpath("text()").get()
-
-                yield response.follow(document_detail['document_link'], callback=self.download_pdf,
-                                      meta={'document': document_detail, 'dont_merge_cookies': True})
-
+        next_btn = response.xpath("//div[@id='apexir_DATA_PANEL']//span[@class='fielddata']/a/@href").get()
+        if next_btn:
             formdata = {
-                '__EVENTARGUMENT': '',
                 '__EVENTTARGET': 'lnkNextPage',
-                '__VIEWSTATEGENERATOR': 'F8727AE4',
-                '__VIEWSTATE': '/wEPDwUKLTk4MTE4OTkyNQ9kFgICBQ9kFgwCAQ8PFgIeB1Zpc2libGVoZGQCAg8PFgIfAGhkZAIDDw8WAh8AaGRkAgQPFgIeC18hSXRlbUNvdW50AgQWCGYPZBYEAgEPDxYCHg9Db21tYW5kQXJndW1lbnQFATFkFgJmDxUBATFkAgIPFQEBIGQCAQ9kFgQCAQ8PFgIfAgUBMmQWAmYPFQEBMmQCAg8VAQEgZAICD2QWBAIBDw8WAh8CBQEzZBYCZg8VAQEzZAICDxUBASBkAgMPZBYEAgEPDxYCHwIFATRkFgJmDxUBATRkAgIPFQEBIGQCBg8PFgIfAGhkZAIIDxYCHwECFBYoAgEPZBYCZg8VBVJSdWxpbmcgZmlsZWQgYnkgQUxKL0ZJVENIL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU3MjggKENlcnRpZmljYXRlIE9mIFNlcnZpY2UpFFByb2NlZWRpbmc6IFIxMzExMDA1D0UtRmlsZWQ6IFJ1bGluZ088YSBocmVmPScvUHVibGlzaGVkRG9jcy9FZmlsZS9HMDAwL00zMDIvSzI0MC8zMDIyNDA3NDguUERGJz5QREY8L2E+ICg3NiBLQik8YnI+CjA2LzE4LzIwMTlkAgMPZBYCZg8VBTlSdWxpbmcgZmlsZWQgYnkgQUxKL0ZJVENIL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU3MjgUUHJvY2VlZGluZzogUjEzMTEwMDUPRS1GaWxlZDogUnVsaW5nUDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL0VmaWxlL0cwMDAvTTMwMi9LMjQwLzMwMjI0MDg1Ny5QREYnPlBERjwvYT4gKDE3NSBLQik8YnI+CjA2LzE4LzIwMTlkAgUPZBYCZg8VBVNSdWxpbmcgZmlsZWQgYnkgQUxKL1NFTUNFUi9DUFVDIG9uIDA2LzE3LzIwMTkgQ29uZiMgMTM1NjgwIChDZXJ0aWZpY2F0ZSBPZiBTZXJ2aWNlKRRQcm9jZWVkaW5nOiBSMTgxMjAwNQ9FLUZpbGVkOiBSdWxpbmdPPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvRWZpbGUvRzAwMC9NMzAzL0swNzQvMzAzMDc0MjAzLlBERic+UERGPC9hPiAoNzYgS0IpPGJyPgowNi8xOC8yMDE5ZAIHD2QWAmYPFQU6UnVsaW5nIGZpbGVkIGJ5IEFMSi9TRU1DRVIvQ1BVQyBvbiAwNi8xNy8yMDE5IENvbmYjIDEzNTY4MBRQcm9jZWVkaW5nOiBSMTgxMjAwNQ9FLUZpbGVkOiBSdWxpbmdQPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvRWZpbGUvRzAwMC9NMzAyL0s5NDIvMzAyOTQyMjg5LlBERic+UERGPC9hPiAoMTI0IEtCKTxicj4KMDYvMTgvMjAxOWQCCQ9kFgJmDxUFUFJ1bGluZyBmaWxlZCBieSBBTEovS0FPL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU2NzkgKENlcnRpZmljYXRlIE9mIFNlcnZpY2UpFFByb2NlZWRpbmc6IEExODEyMDE3D0UtRmlsZWQ6IFJ1bGluZ088YSBocmVmPScvUHVibGlzaGVkRG9jcy9FZmlsZS9HMDAwL00zMDIvSzk0Mi8zMDI5NDIyODguUERGJz5QREY8L2E+ICg3NiBLQik8YnI+CjA2LzE4LzIwMTlkAgsPZBYCZg8VBTdSdWxpbmcgZmlsZWQgYnkgQUxKL0tBTy9DUFVDIG9uIDA2LzE3LzIwMTkgQ29uZiMgMTM1Njc5FFByb2NlZWRpbmc6IEExODEyMDE3D0UtRmlsZWQ6IFJ1bGluZ1A8YSBocmVmPScvUHVibGlzaGVkRG9jcy9FZmlsZS9HMDAwL00zMDIvSzI0MC8zMDIyNDA4NDguUERGJz5QREY8L2E+ICgxMzQgS0IpPGJyPgowNi8xOC8yMDE5ZAIND2QWAmYPFQUiR1JTIEF0dGFjaG1lbnQgM19SZXBvcnQgMDYuMTcuMjAxORRQcm9jZWVkaW5nOiBSMTUwMTAwOBxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50UzxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9SMTUwMTAwOC8yMTIxLzMwMTk0NTk4MS5wZGYnPlBERjwvYT4gKDM3MzYwMyBLQik8YnI+CjA2LzE4LzIwMTlkAg8PZBYCZg8VBTFHUlMgLSBBcHBlbmRpeCA5X0VtaXNzaW9uIEZhY3RvcnNfMDYuMTcuMjAxOS54bHN4FFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMjEvMzAyMjk4MDM5LnBkZic+UERGPC9hPiAoMTA0NDk0IEtCKTxicj4KMDYvMTgvMjAxOWQCEQ9kFgJmDxUFMUdSUyAtIEFwcGVuZGl4IDhfVGVtcGxhdGUgU3VtbWFyeV8wNi4xNy4yMDE5Lnhsc3gUUHJvY2VlZGluZzogUjE1MDEwMDgcRS1GaWxlZDogU3VwcG9ydGluZyBEb2N1bWVudFM8YSBocmVmPScvUHVibGlzaGVkRG9jcy9TdXBEb2MvUjE1MDEwMDgvMjEyMS8zMDIyNDA4NDYucGRmJz5QREY8L2E+ICgxMTQ4ODcgS0IpPGJyPgowNi8xOC8yMDE5ZAITD2QWAmYPFQUzR1JTIC0gQXBwZW5kaXggN19TdG9yYWdlIEZhY2lsaXRpZXNfMDYuMTcuMjAxOS54bHN4FFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMjEvMzAxOTI0OTkwLnBkZic+UERGPC9hPiAoMjAwNTYyIEtCKTxicj4KMDYvMTgvMjAxOWQCFQ9kFgJmDxUFLEdSUyAtIEFwcGVuZGl4IDZfTVNBIFN5c3RlbXNfMDYuMTcuMjAxOS54bHN4FFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMjEvMzAyMjQwNzQwLnBkZic+UERGPC9hPiAoMTUyNzA5IEtCKTxicj4KMDYvMTgvMjAxOWQCFw9kFgJmDxUFYFNXR2FzIChVIDkwNSBHKV9SZXNwb25zZSB0byBTRUQgRGF0YSBSZXF1ZXN0IChTb3V0aHdlc3QgR2FzIFIxNS0wMS0wMDggMjAxOSBBbm51YWwgUmVwb3J0KV9GSU5BTBRQcm9jZWVkaW5nOiBSMTUwMTAwOBxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50VTxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9SMTUwMTAwOC8yMTIwLzMwMTkyNDk4OC5wZGYnPlBERjwvYT4gKDc1OTIzOTQxIEtCKTxicj4KMDYvMTgvMjAxOWQCGQ9kFgJmDxUFVVJ1bGluZyBmaWxlZCBieSBBTEovSlVOR1JFSVMvQ1BVQyBvbiAwNi8xNy8yMDE5IENvbmYjIDEzNTY4NSAoQ2VydGlmaWNhdGUgT2YgU2VydmljZSkUUHJvY2VlZGluZzogQTE5MDMwMDgPRS1GaWxlZDogUnVsaW5nUDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL0VmaWxlL0cwMDAvTTMwMy9LMDc0LzMwMzA3NDIwMS5QREYnPlBERjwvYT4gKDE0NSBLQik8YnI+CjA2LzE3LzIwMTlkAhsPZBYCZg8VBTxSdWxpbmcgZmlsZWQgYnkgQUxKL0pVTkdSRUlTL0NQVUMgb24gMDYvMTcvMjAxOSBDb25mIyAxMzU2ODUUUHJvY2VlZGluZzogQTE5MDMwMDgPRS1GaWxlZDogUnVsaW5nUDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL0VmaWxlL0cwMDAvTTMwMS9LOTQ1LzMwMTk0NTk4MC5QREYnPlBERjwvYT4gKDExNyBLQik8YnI+CjA2LzE3LzIwMTlkAh0PZBYCZg8VBSZSMTUwMTAwOC1QR0UtTkdMQS1BcHAwNi1SZWRhY3RlZC1QYXJ0MhRQcm9jZWVkaW5nOiBSMTUwMTAwOBxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50VTxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9SMTUwMTAwOC8yMTE5LzMwMTkyNDk4Ni5wZGYnPlBERjwvYT4gKDE2MzE4MjcxIEtCKTxicj4KMDYvMTcvMjAxOWQCHw9kFgJmDxUFJlIxNTAxMDA4LVBHRS1OR0xBLUFwcDA2LVJlZGFjdGVkLVBhcnQxFFByb2NlZWRpbmc6IFIxNTAxMDA4HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRVPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL1IxNTAxMDA4LzIxMTgvMzAxOTI0OTg1LnBkZic+UERGPC9hPiAoMTcyNDE2OTYgS0IpPGJyPgowNi8xNy8yMDE5ZAIhD2QWAmYPFQUWU3VtbWFyeSBTaGVldF9KQ01fMjAyMBRQcm9jZWVkaW5nOiBBMTcwMTAxMxxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50VDxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9BMTcwMTAxMy8yMTE2LzMwMTkyNDk4Mi5wZGYnPlBERjwvYT4gKDExNzQ1MjYgS0IpPGJyPgowNi8xNy8yMDE5ZAIjD2QWAmYPFQU6TUNFIFBHRSBKb2ludCBDb29wZXJhdGlvbiBDZXJ0aWZpY2F0ZSBvZiBTZXJ2aWNlIDYtMTctMjAxORRQcm9jZWVkaW5nOiBBMTcwMTAxMxxFLUZpbGVkOiBTdXBwb3J0aW5nIERvY3VtZW50UzxhIGhyZWY9Jy9QdWJsaXNoZWREb2NzL1N1cERvYy9BMTcwMTAxMy8yMTE2LzMwMjI5ODAzMy5wZGYnPlBERjwvYT4gKDUxNzUzMiBLQik8YnI+CjA2LzE3LzIwMTlkAiUPZBYCZg8VBTdNQ0UgQWR2aWNlIExldHRlciAzNi1FIFBHJkUgQWR2aWNlIExldHRlciA0MTA3LUctNTU2My1FFFByb2NlZWRpbmc6IEExNzAxMDEzHEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL0ExNzAxMDEzLzIxMTYvMzAyMjg2MTkwLnBkZic+UERGPC9hPiAoNDg5NjQzIEtCKTxicj4KMDYvMTcvMjAxOWQCJw9kFgJmDxUFTUExODAzMDA5IFNDRS0wNC1BIEJsZWRzb2UgRVJSQVRBIFJlYXNvbmFibGVuZXNzIG9mIFNPTkdTIDEgRXhwZW5zZXMgMjAxNi0yMDE3FFByb2NlZWRpbmc6IEExODAzMDA5HEUtRmlsZWQ6IFN1cHBvcnRpbmcgRG9jdW1lbnRTPGEgaHJlZj0nL1B1Ymxpc2hlZERvY3MvU3VwRG9jL0ExODAzMDA5LzIxMTUvMzAyMjg2MTg5LnBkZic+UERGPC9hPiAoMTg3NDk5IEtCKTxicj4KMDYvMTcvMjAxOWRkgbFULY0pkImMgHBcD01P0VFUvs+M4zbGffzxJNPjwks=',
-                '__EVENTVALIDATION': '/wEdAAs7/SzGrJTxWQTlgEuFeQdE+KzX0FwelcUOhBan/b5uzOgvnuFPcTGgEjLUkdWZc9Q3HyTnWxBPDserVE5AdOKMboAdnFN9V8/jdI6JisscRk4bsve4h24cI1UNeqgIUed3XcL1uN8jICMXmyKyKvRhmxqxgsKed83dLNmKlXfwAJr9MmqSrK6WW0iyGSBDO3+z+wwn6BZL4VHpTU8Tzi856xnhpwsSGQBSYSfF1dWHPbdnme2xzh8PLXfskS+CalL/7mh8OVdGW0F8+RGYNcsD'
+                '__VIEWSTATEGENERATOR': response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get(),
+                '__VIEWSTATE': response.xpath("//input[@id='__VIEWSTATE']/@value").get(),
+                '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
             }
-            yield FormRequest.from_response(response,
-                                            formdata=formdata, method='POST', callback=self.save_document)
 
-    def download_pdf(self, response):
-        document_detail = response.meta['document']
+            next_page_request_parameters = {
+                'formdata': formdata,
+                'method': 'POST',
+                'url': response,
+                'callback': self.save_document
+            }
+            self.request_manager.next_page = next_page_request_parameters
+        else:
+            self.request_manager.next_page = None
+        if len(self.request_manager.Filing_request) > 0:
+            yield self.request_manager.Filing_request.pop()
+        else:
+            yield {'dockets': item}
+
+    def parse_document_page(self, response):
+        item = response.meta['item']
         table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr")
         skip = False
-        documents = list()
-        files_list = list()
+        document_list = list()
         for row in table_rows:
-            document = Document()
             if not skip:
+                document = Document()
                 document['title'] = row.xpath("td[@class='ResultTitleTD']/text()").get()
-                document['link'] = response.urljoin(row.xpath("td[@class='ResultLinkTD']/a/@href").get())
-                files_list.append(document['link'])
-                document['type'] = row.xpath("td[@class='ResultTypeTD']/text()").get()
-                document['date'] = row.xpath("td[@class='ResultDateTD']/text()").get()
-                documents.append(document)
+                document['source_url'] = "http://docs.cpuc.ca.gov{}".format(row.xpath("td[@class="
+                                                                                      "'ResultLinkTD']/a/@href").get())
+                document['extension'] = row.xpath("td[@class='ResultLinkTD']/a/text()").get()
+                document_list.append(document)
+
                 skip = True
             else:
                 skip = False
 
-        document_detail['documents'] = documents
-        files = File()
-        files['file_urls'] = files_list
-        # yield files
-        yield document_detail
+        item['filings'][len(item['filings'])-1]['documents'] = document_list
+
+        if len(self.request_manager.Filing_request) > 0:
+            yield self.request_manager.Filing_request.pop()
+        elif len(self.request_manager.Filing_request) == 0:
+            yield FormRequest.from_response(self.request_manager.next_page['url'],
+                                            formdata=self.request_manager.next_page['formdata'],
+                                            method=self.request_manager.next_page['method'],
+                                            callback=self.request_manager.next_page['callback'],
+                                            meta={'item': item, 'dont_merge_cookies': True})
+        elif self.request_manager.next_page is None:
+            yield item
 
