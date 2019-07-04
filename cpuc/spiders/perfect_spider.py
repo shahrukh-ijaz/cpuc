@@ -95,17 +95,18 @@ class CpucSpider(scrapy.Spider):
         else:
             proceeding_num = response.meta['proceeding_set']
             print("PROCEEDING # {}".format(proceeding_num))
-            # proceeding_num = {'A1710003', 'A1904010'}
-            proceeding_num = {'A1904010'}
-            print("PROCEEDING # {}".format(proceeding_num))
-            while proceeding_num:
-                num = proceeding_num.pop()
-                next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR' \
-                            ':P5_PROCEEDING_SELECT:{}'.format(num)
-                yield response.follow(next_page,
-                                      callback=self.parse_proceeding_number,
-                                      # meta={'dont_merge_cookie': True}
-                                      )
+
+            next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR' \
+                        ':P5_PROCEEDING_SELECT:{}'.format("A1806016")
+            # print(next_page)
+            yield response.follow(next_page, callback=self.parse_proceeding_number
+                                  )
+            # while proceeding_num:
+            #     num = proceeding_num.pop()
+            #     next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR' \
+            #                 ':P5_PROCEEDING_SELECT:{}'.format(num)
+            #     yield response.follow(next_page,
+            #                           callback=self.parse_proceeding_number)
 
     def parse_proceeding_number(self, response):
         proceeding_details = ProceedingDetail()
@@ -117,8 +118,7 @@ class CpucSpider(scrapy.Spider):
 
         proceeding_details['filled_on'] = table_rows.xpath("td[position()=2]//span[@id='P56_FILING_DATE']/text()").get()
         proceeding_details['status'] = table_rows.xpath("td[position()=2]//span[@id='P56_STATUS']/text()").get()
-        proceeding_details['proceeding_type'] = table_rows.xpath("td[position()=2]//span[@id='P56_CATEGORY']/text()")\
-            .get()
+        proceeding_details['proceeding_type'] = table_rows.xpath("td[position()=2]//span[@id='P56_CATEGORY']/text()").get()
         proceeding_details['title'] = table_rows.xpath("td[position()=2]//span[@id='P56_DESCRIPTION']/text()").get()
         proceeding_details['source_url'] = response.url
 
@@ -126,50 +126,75 @@ class CpucSpider(scrapy.Spider):
 
         cookie = response.request.headers.getlist("Cookie")
         proceeding_details['filings'] = list()
-        yield response.follow('https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
-                              callback=self.save_document,
-                              errback=self.error_back,
-                              headers={'Cookie': cookie},
-                              dont_filter=True,
-                              meta={'item': proceeding_details, 'dont_merge_cookies': True}
-                              )
+
+        yield scrapy.Request(
+            url='https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
+            callback=self.save_document,
+            errback=self.error_back,
+            headers={'Cookie': cookie},
+            dont_filter=True,
+            meta={'item': proceeding_details, 'dont_merge_cookies': True}
+        )
 
     @staticmethod
     def error_back(failure):
         logging.exception(failure)
 
     def save_document(self, response):
+        # print("title {}" .format(response.meta['item']['title']))
         table_rows = response.xpath("//div[@id='apexir_DATA_PANEL']//table[@class='apexir_WORKSHEET_DATA']//"
                                     "tr[@class='even'] | //tr[@class='odd']")
-        count = 1
         for row in table_rows:
             filings = Filing()
             filings['description'] = row.xpath("td[@headers='DESCRIPTION']/text()").get()
-            print("This is the description # {} : {} ".format(count, filings['description']))
-            count += 1
+
             filings['filled_on'] = row.xpath("td[@headers='FILING_DATE']/text()").get()
             filings['types'] = [row.xpath("td[@headers='DOCUMENT_TYPE']//u/text()").get()]
 
             filings['filing_parties'] = [row.xpath("td[@headers='FILED_BY']/text()").get()]
 
             document_link = row.xpath("td[@headers='DOCUMENT_TYPE']/a/@href").get()
+            # print("document link: {}".format(document_link))
             item = response.meta['item']
+            # item['filings'].append(filings)
 
             pattern = re.compile("http:\/\/docs.cpuc.ca.gov\/SearchRes.aspx\?DocFormat=ALL&DocID=[0-9]{9}")
             if pattern.match(document_link):
-                cookie = response.request.headers.getlist("Cookie")
                 request = response.follow(document_link,
                                           callback=self.parse_document_page,
                                           errback=self.error_back,
                                           meta={'item': item, 'dont_merge_cookies': True, 'filings': filings})
                 self.request_manager.filing_requests.append(request)
 
+        next_btn = response.xpath("//div[@id='apexir_DATA_PANEL']//span[@class='fielddata']/a/@href").get()
+        if next_btn:
+            pass
+            # formdata = {
+            #     '__EVENTTARGET': 'lnkNextPage',
+            #     '__VIEWSTATEGENERATOR': response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get(),
+            #     '__VIEWSTATE': response.xpath("//input[@id='__VIEWSTATE']/@value").get(),
+            #     '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
+            # }
+            #
+            # next_page_request_parameters = {
+            #     'formdata': formdata,
+            #     'method': 'POST',
+            #     'url': response,
+            #     'callback': self.save_document
+            # }
+            # self.request_manager.next_page = next_page_request_parameters
+        else:
+            self.request_manager.next_page = None
+
         if self.request_manager.filing_requests:
             yield self.request_manager.filing_requests.pop()
 
-    @staticmethod
-    def get_documents_of_filing(document_list, response):
+    def parse_document_page(self, response):
+        item = response.meta['item']
+
         table_rows = response.xpath('//*[@id="ResultTable"]//tr[not(@style)]')
+
+        document_list = list()
         for row in table_rows:
             document = Document()
             document['title'] = row.xpath("td[@class='ResultTitleTD']/text()").get()
@@ -179,19 +204,22 @@ class CpucSpider(scrapy.Spider):
                 document['extension'] = row.xpath("//td[@class='ResultLinkTD']/a/text()").get()
                 document_list.append(document)
 
-    def get_next_request(self, item):
-        if self.request_manager.filing_requests:
-            return self.request_manager.filing_requests.pop()
-        else:
-            return {'docket': item}
-
-    def parse_document_page(self, response):
-        item = response.meta['item']
-        document_list = list()
-        self.get_documents_of_filing(document_list, response)
-
+        # item['filings'][len(item['filings'])-1]['documents'] = document_list
         filings = response.meta['filings']
         filings['documents'] = document_list
         item['filings'].append(filings)
 
-        yield self.get_next_request(item)
+        if self.request_manager.filing_requests:
+            yield self.request_manager.filing_requests.pop()
+        else:
+            if self.request_manager.next_page:
+                yield FormRequest.from_response(self.request_manager.next_page['url'],
+                                                formdata=self.request_manager.next_page['formdata'],
+                                                method=self.request_manager.next_page['method'],
+                                                dont_filter=True,
+                                                errback=self.error_back,
+                                                callback=self.request_manager.next_page['callback'],
+                                                meta={'item': item, 'dont_merge_cookies': True})
+            else:
+                yield {'docket': item}
+
