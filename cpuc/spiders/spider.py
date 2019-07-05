@@ -3,6 +3,8 @@ import re
 from scrapy.loader import ItemLoader
 import scrapy
 from scrapy import FormRequest
+from scrapy.loader.processors import TakeFirst
+
 from cpuc.RequestManager import RequestManager
 from cpuc.items import Document, ProceedingDetail, Filing
 
@@ -33,25 +35,28 @@ class CpucSpider(scrapy.Spider):
                                         meta={'proceeding_set': set(), 'page_no': 0})
 
     @staticmethod
-    def get_filling_parties(table_rows, proceeding_details):
+    def get_filling_parties(table_rows, docket_loader):
         filling_parties = list()
         for filled_party in table_rows.xpath("td[position()=2]//span[@id='P56_FILED_BY']/text()"):
             filling_parties.append(filled_party.get())
-        proceeding_details['filing_parties'] = filling_parties
+        # proceeding_details['filing_parties'] = filling_parties
+        docket_loader.add_value('filing_parties', filling_parties)
 
     @staticmethod
-    def get_industries(table_rows, proceeding_details):
+    def get_industries(table_rows, docket_loader):
         industries = list()
         for industry in table_rows.xpath("td[position()=2]//span[@id='P56_INDUSTRY']/text()"):
             industries.append(industry.get())
-        proceeding_details['industries'] = industries
+        # proceeding_details['industries'] = industries
+        docket_loader.add_value('industries', industries)
 
     @staticmethod
-    def get_assignees(table_rows, proceeding_details):
+    def get_assignees(table_rows, docket_loader):
         assignees = list()
         for industry in table_rows.xpath("td[position()=2]//span[@id='P56_STAFF']/text()"):
             assignees.append(industry.get())
-        proceeding_details['assignees'] = assignees
+        # proceeding_details['assignees'] = assignees
+        docket_loader.add_value('assignees', assignees)
 
     @staticmethod
     def get_proceeding_numers(response):
@@ -111,29 +116,39 @@ class CpucSpider(scrapy.Spider):
 
     def parse_proceeding_number(self, response):
         proceeding_details = ProceedingDetail()
+
         table_rows = response.xpath("//table[@id='apex_layout_1757486743389754952']/tr")
+        docket_loader = ItemLoader(item=ProceedingDetail(), response=response, selector=table_rows)
 
-        self.get_filling_parties(table_rows, proceeding_details)
+        self.get_filling_parties(table_rows, docket_loader)
 
-        self.get_industries(table_rows, proceeding_details)
+        self.get_industries(table_rows, docket_loader)
 
-        proceeding_details['filled_on'] = table_rows.xpath("td[position()=2]//span[@id='P56_FILING_DATE']/text()").get()
-        proceeding_details['status'] = table_rows.xpath("td[position()=2]//span[@id='P56_STATUS']/text()").get()
-        proceeding_details['proceeding_type'] = table_rows.xpath("td[position()=2]//span[@id='P56_CATEGORY']/text()")\
-            .get()
-        proceeding_details['title'] = table_rows.xpath("td[position()=2]//span[@id='P56_DESCRIPTION']/text()").get()
-        proceeding_details['source_url'] = response.url
+        docket_loader.add_xpath('filled_on', "td[position()=2]//span[@id='P56_FILING_DATE']/text()", TakeFirst())
+        docket_loader.add_xpath('status', "td[position()=2]//span[@id='P56_STATUS']/text()")
+        docket_loader.add_xpath('proceeding_type', "td[position()=2]//span[@id='P56_CATEGORY']/text()")
+        docket_loader.add_xpath('title', "td[position()=2]//span[@id='P56_DESCRIPTION']/text()")
+        docket_loader.add_value('source_url', response.url)
+        # proceeding_details['filled_on'] = table_rows.xpath("").get()
+        # proceeding_details['status'] = table_rows.xpath("td[position()=2]//span[@id='P56_STATUS']/text()").get()
+        # proceeding_details['proceeding_type'] = table_rows.xpath("td[position()=2]//span[@id='P56_CATEGORY']/text()")\
+        #     .get()
+        # proceeding_details['title'] = table_rows.xpath("td[position()=2]//span[@id='P56_DESCRIPTION']/text()").get()
+        # proceeding_details['source_url'] = response.url
 
-        self.get_assignees(table_rows, proceeding_details)
+        self.get_assignees(table_rows, docket_loader)
 
         cookie = response.request.headers.getlist("Cookie")
-        proceeding_details['filings'] = list()
+        filings = list()
+        docket_loader.add_value('filings', filings)
+        # proceeding_details['filings'] = list()
         yield response.follow('https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
                               callback=self.parse_filing_documents,
                               errback=self.error_back,
                               headers={'Cookie': cookie},
                               dont_filter=True,
-                              meta={'item': proceeding_details, 'dont_merge_cookies': True}
+                              meta={'item': proceeding_details, 'dont_merge_cookies': True,
+                                    'docket_loader': docket_loader}
                               )
 
     @staticmethod
@@ -149,24 +164,25 @@ class CpucSpider(scrapy.Spider):
             return False
 
     def parse_filing_documents(self, response):
+        docket_loader = response.meta['docket_loader']
         table_rows = response.xpath("//div[@id='apexir_DATA_PANEL']//table[@class='apexir_WORKSHEET_DATA']//"
                                     "tr[@class='even'] | //tr[@class='odd']")
         for row in table_rows:
-            filings = Filing()
-            filings['description'] = row.xpath("td[@headers='DESCRIPTION']/text()").get()
-            filings['filled_on'] = row.xpath("td[@headers='FILING_DATE']/text()").get()
-            filings['types'] = [row.xpath("td[@headers='DOCUMENT_TYPE']//u/text()").get()]
+            filing_loader = ItemLoader(item=Filing(), response=response, selector=table_rows)
 
-            filings['filing_parties'] = [row.xpath("td[@headers='FILED_BY']/text()").get()]
+            filing_loader.add_xpath('description', 'td[@headers="DESCRIPTION"]/text()')
+            filing_loader.add_xpath('filled_on', 'td[@headers="FILING_DATE"]/text()')
+            filing_loader.add_xpath('types', 'td[@headers="DOCUMENT_TYPE"]//u/text()')
+            filing_loader.add_value('filing_parties', ['td[@headers="FILED_BY"]/text()'])
 
             document_link = row.xpath("td[@headers='DOCUMENT_TYPE']/a/@href").get()
-            item = response.meta['item']
 
             if self.get_link_status(document_link):
                 request = response.follow(document_link,
                                           callback=self.parse_document_page,
                                           errback=self.error_back,
-                                          meta={'item': item, 'dont_merge_cookies': True, 'filings': filings})
+                                          meta={'dont_merge_cookies': True, 'docket_loader': docket_loader,
+                                                'filing_loader': filing_loader})
                 self.request_manager.filing_requests.append(request)
 
         if self.request_manager.filing_requests:
@@ -186,18 +202,21 @@ class CpucSpider(scrapy.Spider):
                 document_list.append(document)
         return document_list
 
-    def get_next_request(self, item):
+    def get_next_request(self, docket_loader):
         if self.request_manager.filing_requests:
             return self.request_manager.filing_requests.pop()
         else:
-            return {'docket': item}
+            return docket_loader.load_item()
 
     def parse_document_page(self, response):
-        item = response.meta['item']
+        docket_loader = response.meta['docket_loader']
+        filing_loader = response.meta['filing_loader']
         document_list = self.get_documents_of_filing(response)
 
-        filings = response.meta['filings']
-        filings['documents'] = document_list
-        item['filings'].append(filings)
+        filing_loader.add_value('documents', document_list)
+        filings_list = docket_loader.get_output_value('filings')
 
-        yield self.get_next_request(item)
+        filings_list.append(filing_loader.load_item())
+        docket_loader.add_value('filings', filings_list)
+
+        yield self.get_next_request(docket_loader)
