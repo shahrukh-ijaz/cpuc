@@ -30,7 +30,7 @@ DUPEFILTER_DEBUG = True
 # Configure a delay for requests for the same website (default: 0)
 # See https://doc.scrapy.org/en/latest/topics/settings.html#download-delay
 # See also autothrottle settings and docs
-DOWNLOAD_DELAY = 1
+DOWNLOAD_DELAY = 2
 # The download delay setting will honor only one of:
 #CONCURRENT_REQUESTS_PER_DOMAIN = 16
 #CONCURRENT_REQUESTS_PER_IP = 16
@@ -66,10 +66,16 @@ DOWNLOAD_DELAY = 1
 #}
 
 # Configure item pipelines
+# ITEM_PIPELINES = ['stack.pipelines.MongoDBPipeline', ]
+
+# MONGODB_SERVER = "localhost"
+# MONGODB_PORT = 27017
+# MONGODB_DB = "cpuc_db"
+# MONGODB_COLLECTION = "proceeding_details"
 # See https://doc.scrapy.org/en/latest/topics/item-pipeline.html
-#ITEM_PIPELINES = {
-#    'cpuc.pipelines.CpucPipeline': 300,
-#}
+# ITEM_PIPELINES = {
+#    'cpuc.pipelines.MongoDBPipeline': 300,
+# }
 # ITEM_PIPELINES = {'scrapy.pipelines.files.FilesPipeline': 1}
 # FILES_STORE = 'files'
 # Enable and configure the AutoThrottle extension (disabled by default)

@@ -208,7 +208,7 @@
 #         if len(self.request_manager.filing_requests) > 88:
 #             yield self.request_manager.filing_requests.pop()
 #         else:
-#             if self.request_manager.next_page:
+#             if self.request_manager.page:
 #                 yield FormRequest.from_response(self.request_manager.next_page['url'],
 #                                                 formdata=self.request_manager.next_page['formdata'],
 #                                                 method=self.request_manager.next_page['method'],

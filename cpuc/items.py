@@ -11,28 +11,6 @@ from scrapy.loader.processors import TakeFirst
 from scrapy import Field
 
 
-class DocumentDetail(scrapy.Item):
-    filling_date = scrapy.Field()
-    filled_by = scrapy.Field()
-    description = scrapy.Field()
-    document_type = scrapy.Field()
-    document_link = scrapy.Field()
-    proceeding_url = scrapy.Field()
-    documents = scrapy.Field()
-
-
-# class Document(scrapy.Item):
-#     title = scrapy.Field()
-#     link = scrapy.Field()
-#     type = scrapy.Field()
-#     date = scrapy.Field()
-
-
-class File(scrapy.Item):
-    file_urls = scrapy.Field()
-    files = scrapy.Field()
-
-
 class ProceedingDetail(scrapy.Item):
     title = Field(output_processor=TakeFirst())
     filing_parties = Field()
@@ -47,9 +25,9 @@ class ProceedingDetail(scrapy.Item):
 
 
 class Filing(scrapy.Item):
-    description = Field()
+    description = Field(output_processor=TakeFirst())
     documents = Field()
-    filled_on = Field()
+    filled_on = Field(output_processor=TakeFirst())
     filing_parties = Field()
     types = Field()
 
@@ -58,6 +36,3 @@ class Document(scrapy.Item):
     title = Field()
     source_url = Field()
     extension = Field()
-
-
-
