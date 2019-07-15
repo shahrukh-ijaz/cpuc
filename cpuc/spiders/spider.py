@@ -1,6 +1,6 @@
 import json
 import re
-import urllib
+from urllib.parse import urlencode, quote_plus
 
 from scrapy.loader import ItemLoader
 import scrapy
@@ -50,16 +50,19 @@ class CpucSpider(scrapy.Spider):
             proceeding_num = self.get_proceeding_numers(response)       # call this again to get last page data
             # proceeding_num = {'A1208008', 'A1904010'}
             proceeding_num = {'A1208008'}
-
+            cookiejar = 0
             while proceeding_num:
                 num = proceeding_num.pop()
-                next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:6062906969229::NO:RP,57,RIR' \
+                next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:::NO:RP,57,RIR' \
                             ':P5_PROCEEDING_SELECT:{}'.format(num)
 
-                yield response.follow(next_page,
-                                      callback=self.parse_proceeding_number,
-                                      meta={'cookiejar': next_page}
-                                      )
+                cookiejar += 1
+
+                yield scrapy.Request(
+                    next_page,
+                    callback=self.parse_proceeding_number,
+                    meta={'cookiejar': cookiejar}
+                )
 
     def parse_proceeding_number(self, response):
         table_rows = response.xpath("//table[@id='apex_layout_1757486743389754952']/tr")
@@ -79,7 +82,7 @@ class CpucSpider(scrapy.Spider):
 
         docket_loader.add_value('filings', list())
 
-        yield response.follow('https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
+        return scrapy.Request('https://apps.cpuc.ca.gov/apex/f?p=401:57:0::NO',
                               callback=self.parse_filing_documents,
                               dont_filter=True,
                               meta={
@@ -117,29 +120,34 @@ class CpucSpider(scrapy.Spider):
 
             if next_btn:
                 next_btn = next_btn.split("'")[1]
+                if response.xpath("//*[@name='p_instance']/@value").get() is None:
+                    p_instance = response.meta['p_instance']
+                else:
+                    p_instance = response.xpath("//*[@name='p_instance']/@value").get(),
                 formdata = {
                     'p_request': 'APXWGT',
-                    'p_instance': response.xpath("//*[@name='p_instance']/@value").get(),
-                    'p_flow_id': response.xpath("//*[@name='p_flow_id']/@value").get(),
-                    'p_flow_step_id': response.xpath("//*[@name='p_flow_step_id']/@value").get(),
+                    'p_instance': p_instance,
+                    'p_flow_id': '401',
+                    'p_flow_step_id': '57',
                     'p_widget_num_return': '100',
                     'p_widget_name': 'worksheet',
                     'p_widget_mod': 'ACTION',
                     'p_widget_action': 'PAGE',
-                    'p_widget_action_mode': next_btn,
+                    'p_widget_action_mod': next_btn,
                     'x01': response.xpath('//input[@id="apexir_WORKSHEET_ID"]/@value').get(),
                     'x02': response.xpath('//input[@id="apexir_REPORT_ID"]/@value').get(),
                 }
-                yield FormRequest('https://apps.cpuc.ca.gov/apex/wwv_flow.show',
-                                  formdata=formdata,
-                                  # dont_filter=True,
-                                  callback=self.parse_filing_documents,
-                                  meta={'docket_loader': docket_loader,
-                                        'cookiejar': response.meta['cookiejar'],
-                                        'request_manager': request_manager})
+                yield scrapy.FormRequest('https://apps.cpuc.ca.gov/apex/wwv_flow.show',
+                                         formdata=formdata,
+                                         method="POST",
+                                         callback=self.parse_filing_documents,
+                                         meta={'docket_loader': docket_loader,
+                                                'cookiejar': response.meta['cookiejar'],
+                                                'request_manager': request_manager,
+                                                'p_instance': p_instance})
             else:
                 if request_manager.filing_requests:
-                    # request_parameters = request_manager.filing_requests.pop()
+                    request_parameters = request_manager.filing_requests.pop()
                     print("length of request_manager {} ".format(len(request_manager.filing_requests)))
                     # yield response.follow(request_parameters['document_link'],
                     #                       meta={
