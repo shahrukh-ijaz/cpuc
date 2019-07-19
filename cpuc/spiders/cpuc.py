@@ -1,6 +1,4 @@
-import json
 import re
-from urllib.parse import urlencode, quote_plus
 
 from scrapy.loader import ItemLoader
 import scrapy
@@ -24,6 +22,7 @@ class CpucSpider(scrapy.Spider):
             '__VIEWSTATE': response.xpath("//input[@id='__VIEWSTATE']/@value").get(),
             '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get(),
         }
+
         yield FormRequest.from_response(response,
                                         formdata=formdata,
                                         method='POST',
@@ -32,36 +31,32 @@ class CpucSpider(scrapy.Spider):
 
     def extract_proceeding_docket(self, response):
         next_page = response.xpath("//a[@id='lnkNextPage']")
+        proceeding_set = self.get_proceeding_numbers(response)
         if next_page:
-            proceeding_set = self.get_proceeding_numers(response)
             formdata = {
                 '__EVENTTARGET': 'lnkNextPage',
                 '__VIEWSTATEGENERATOR': response.xpath("//input[@id='__VIEWSTATEGENERATOR']/@value").get(),
                 '__VIEWSTATE': response.xpath("//input[@id='__VIEWSTATE']/@value").get(),
                 '__EVENTVALIDATION': response.xpath("//input[@id='__EVENTVALIDATION']/@value").get()
             }
+
             yield FormRequest(
                 url='http://docs.cpuc.ca.gov/SearchRes.aspx',
                 formdata=formdata,
                 callback=self.extract_proceeding_docket,
                 meta={'proceeding_set': proceeding_set}
             )
+
         else:
-            proceeding_num = self.get_proceeding_numers(response)       # call this again to get last page data
-            # proceeding_num = {'A1208008', 'A1904010'}
-            proceeding_num = {'A1208008'}
-            cookiejar = 0
-            while proceeding_num:
-                num = proceeding_num.pop()
+            while proceeding_set:
+                num = proceeding_set.pop()
                 next_page = 'https://apps.cpuc.ca.gov/apex/f?p=401:56:::NO:RP,57,RIR' \
                             ':P5_PROCEEDING_SELECT:{}'.format(num)
-
-                cookiejar += 1
 
                 yield scrapy.Request(
                     next_page,
                     callback=self.parse_proceeding_number,
-                    meta={'cookiejar': cookiejar}
+                    meta={'cookiejar': num}
                 )
 
     def parse_proceeding_number(self, response):
@@ -102,61 +97,70 @@ class CpucSpider(scrapy.Spider):
             for row in table_rows:
                 filing_loader = ItemLoader(item=Filing(), response=response, selector=row)
                 filing_loader.add_xpath('description', 'td[@headers="DESCRIPTION"]/text()')
-                print("d. {} ".format(filing_loader.get_output_value('description')))
                 filing_loader.add_xpath('filled_on', 'td[@headers="FILING_DATE"]/text()')
                 filing_loader.add_xpath('types', 'td[@headers="DOCUMENT_TYPE"]//u/text()')
                 filing_loader.add_xpath('filing_parties', "td[@headers='FILED_BY']/text()")
                 document_link = row.xpath("td[@headers='DOCUMENT_TYPE']/a/@href").get()
 
                 if document_link != 'http://www.cpuc.ca.gov/orderadocument/':
-                    request_parameters = {
-                        'document_link': document_link,
-                        'docket_loader': docket_loader,
-                        'filing_loader': filing_loader
+                    if self.is_exists(document_link, request_manager.filing_requests) is not True:
+                        request_parameters = {
+                            'document_link': document_link,
+                            'docket_loader': docket_loader,
+                            'filing_loader': filing_loader
+                        }
+                        request_manager.filing_requests.append(request_parameters)
+
+            next_btn = response.xpath('//*[@id="apexir_DATA_PANEL"]/table/tr[1]/td/span/a[last()]/@href').get()
+            total_doc = response.xpath('//*[@id="apexir_DATA_PANEL"]/table/tr[1]/td/span/text()').get().strip()
+            max_range = total_doc.split(" ")[4]
+            current_range = total_doc.split(" ")[2]
+            if int(current_range) < int(max_range):
+
+                if next_btn:
+                    next_btn = next_btn.split("'")[1]
+
+                    if response.xpath("//*[@name='p_instance']/@value").get() is None:
+                        p_instance = response.meta['p_instance']
+                    else:
+                        p_instance = response.xpath("//*[@name='p_instance']/@value").get(),
+                    formdata = {
+                        'p_request': 'APXWGT',
+                        'p_instance': p_instance,
+                        'p_flow_id': '401',
+                        'p_flow_step_id': '57',
+                        'p_widget_num_return': '100',
+                        'p_widget_name': 'worksheet',
+                        'p_widget_mod': 'ACTION',
+                        'p_widget_action': 'PAGE',
+                        'p_widget_action_mod': next_btn,
+                        'x01': response.xpath('//input[@id="apexir_WORKSHEET_ID"]/@value').get(),
+                        'x02': response.xpath('//input[@id="apexir_REPORT_ID"]/@value').get(),
                     }
-                    request_manager.filing_requests.append(request_parameters)
 
-            next_btn = response.xpath('//*[@id="apexir_DATA_PANEL"]/table/tr[1]/td/span/a/@href').get()
+                    yield scrapy.FormRequest('https://apps.cpuc.ca.gov/apex/wwv_flow.show',
+                                             formdata=formdata,
+                                             method="POST",
+                                             callback=self.parse_filing_documents,
+                                             meta={'docket_loader': docket_loader,
+                                                    'cookiejar': response.meta['cookiejar'],
+                                                    'request_manager': request_manager,
+                                                    'p_instance': p_instance})
 
-            if next_btn:
-                next_btn = next_btn.split("'")[1]
-                if response.xpath("//*[@name='p_instance']/@value").get() is None:
-                    p_instance = response.meta['p_instance']
-                else:
-                    p_instance = response.xpath("//*[@name='p_instance']/@value").get(),
-                formdata = {
-                    'p_request': 'APXWGT',
-                    'p_instance': p_instance,
-                    'p_flow_id': '401',
-                    'p_flow_step_id': '57',
-                    'p_widget_num_return': '100',
-                    'p_widget_name': 'worksheet',
-                    'p_widget_mod': 'ACTION',
-                    'p_widget_action': 'PAGE',
-                    'p_widget_action_mod': next_btn,
-                    'x01': response.xpath('//input[@id="apexir_WORKSHEET_ID"]/@value').get(),
-                    'x02': response.xpath('//input[@id="apexir_REPORT_ID"]/@value').get(),
-                }
-                yield scrapy.FormRequest('https://apps.cpuc.ca.gov/apex/wwv_flow.show',
-                                         formdata=formdata,
-                                         method="POST",
-                                         callback=self.parse_filing_documents,
-                                         meta={'docket_loader': docket_loader,
-                                                'cookiejar': response.meta['cookiejar'],
-                                                'request_manager': request_manager,
-                                                'p_instance': p_instance})
             else:
+
                 if request_manager.filing_requests:
                     request_parameters = request_manager.filing_requests.pop()
-                    print("length of request_manager {} ".format(len(request_manager.filing_requests)))
-                    # yield response.follow(request_parameters['document_link'],
-                    #                       meta={
-                    #                             'dont_merge_cookies': True,
-                    #                             'docket_loader': request_parameters['docket_loader'],
-                    #                             'filing_loader': request_parameters['filing_loader'],
-                    #                             'request_manager': request_manager},
-                    #                       callback=self.parse_document_page
-                    #                       )
+
+                    yield response.follow(request_parameters['document_link'],
+                                          meta={
+                                              'dont_merge_cookies': True,
+                                              'docket_loader': request_parameters['docket_loader'],
+                                              'filing_loader': request_parameters['filing_loader'],
+                                              'request_manager': request_manager},
+                                          callback=self.parse_document_page
+                                          )
+
         else:
             return docket_loader.load_item()
 
@@ -186,9 +190,11 @@ class CpucSpider(scrapy.Spider):
                                             'filing_loader': request_parameters['filing_loader'],
                                             'request_manager': request_manager},
                                       callback=self.parse_document_page
-                                  )
+                                      )
+
             return request
         else:
+
             return docket_loader.load_item()
 
     @staticmethod
@@ -207,7 +213,7 @@ class CpucSpider(scrapy.Spider):
         docket_loader.add_value('assignees', assignees)
 
     @staticmethod
-    def get_proceeding_numers(response):
+    def get_proceeding_numbers(response):
         proceeding_set = response.meta['proceeding_set']
         table_rows = response.xpath("//table[@id='ResultTable']/tbody/tr[not(@style)]")
         if table_rows:
@@ -221,6 +227,7 @@ class CpucSpider(scrapy.Spider):
 
             return proceeding_set
         else:
+
             return proceeding_set
 
     @staticmethod
@@ -239,3 +246,12 @@ class CpucSpider(scrapy.Spider):
                 document_list.append(document)
 
         return document_list
+
+    @staticmethod
+    def is_exists(document_link, requests):
+        for request in requests:
+
+            if document_link == request['document_link']:
+                return True
+
+        return False

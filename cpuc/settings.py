@@ -21,9 +21,7 @@ NEWSPIDER_MODULE = 'cpuc.spiders'
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True
-COOKIES_ENABLED = True
-COOKIES_DEBUG = True
-DUPEFILTER_DEBUG = True
+
 # Configure maximum concurrent requests performed by Scrapy (default: 16)
 #CONCURRENT_REQUESTS = 32
 
@@ -36,7 +34,8 @@ DUPEFILTER_DEBUG = True
 #CONCURRENT_REQUESTS_PER_IP = 16
 
 # Disable cookies (enabled by default)
-#COOKIES_ENABLED = False
+COOKIES_ENABLED = True
+COOKIES_DEBUG = True
 
 # Disable Telnet Console (enabled by default)
 #TELNETCONSOLE_ENABLED = False
@@ -68,14 +67,14 @@ DUPEFILTER_DEBUG = True
 # Configure item pipelines
 # ITEM_PIPELINES = ['stack.pipelines.MongoDBPipeline', ]
 
-# MONGODB_SERVER = "localhost"
-# MONGODB_PORT = 27017
-# MONGODB_DB = "cpuc_db"
-# MONGODB_COLLECTION = "proceeding_details"
+MONGODB_SERVER = "localhost"
+MONGODB_PORT = 27017
+MONGODB_DB = "cpuc_db"
+MONGODB_COLLECTION = "proceeding_details"
 # See https://doc.scrapy.org/en/latest/topics/item-pipeline.html
-# ITEM_PIPELINES = {
-#    'cpuc.pipelines.MongoDBPipeline': 300,
-# }
+ITEM_PIPELINES = {
+   'cpuc.pipelines.MongoDBPipeline': 300,
+}
 # ITEM_PIPELINES = {'scrapy.pipelines.files.FilesPipeline': 1}
 # FILES_STORE = 'files'
 # Enable and configure the AutoThrottle extension (disabled by default)

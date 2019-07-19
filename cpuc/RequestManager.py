@@ -1,3 +1,5 @@
 class RequestManager:
     filing_requests = []
-    next_page = None
+
+    def __init__(self):
+        self.filing_requests = []
