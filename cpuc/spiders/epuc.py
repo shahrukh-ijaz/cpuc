@@ -213,16 +213,16 @@ class CpucSpider(scrapy.Spider):
         filings_data = response.xpath("//table[starts-with(@id, 'form.treeTable')]/tr[starts-with(@class, 'tt')]")
         for filing in filings_data:
 
-            filing_loader = ItemLoader(item=Filing(), response=response, selector=filing)
-            filled_on = filing.xpath("td[2]/text()").getall()[3].strip()
-
-            if filled_on is None:
-                count = filing.xpath("@class").get().strip()
-
-            filing_loader.add_value('filled_on', filled_on)
-            filing_loader.add_xpath('description', "td[3]/text()")
-            filing_loader.add_xpath('types', "td[6]/text()")
-            filings.append(filing_loader.load_item())
+            # filing_loader = ItemLoader(item=Filing(), response=response, selector=filing)
+            # filled_on = filing.xpath("td[2]/text()").getall()[3].strip()
+            #
+            # if filled_on is None:
+            #     count = filing.xpath("@class").get().strip()
+            #
+            # filing_loader.add_value('filled_on', filled_on)
+            # filing_loader.add_xpath('description', "td[3]/text()")
+            # filing_loader.add_xpath('types', "td[6]/text()")
+            # filings.append(filing_loader.load_item())
 
     @staticmethod
     def get_start_date():
